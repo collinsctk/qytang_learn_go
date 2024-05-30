@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/openconfig/gnmi/proto/gnmi"
@@ -53,32 +52,13 @@ func loadTLSCredentials(caFile, certFile, keyFile string) (credentials.Transport
 	return credentials.NewTLS(config), nil
 }
 
-func parsePath(path string) *gnmi.Path {
-	elems := []*gnmi.PathElem{}
-	parts := strings.Split(path, "/")
-	for _, part := range parts {
-		if part == "" || strings.Contains(part, ":") {
-			continue // Skip empty parts and prefixes
-		}
-		elem := &gnmi.PathElem{}
-		if strings.Contains(part, "[") {
-			nameAndKey := strings.SplitN(part, "[", 2)
-			elem.Name = nameAndKey[0]
-			keyPart := strings.TrimSuffix(nameAndKey[1], "]")
-			keyVals := strings.Split(keyPart, "=")
-			elem.Key = map[string]string{keyVals[0]: keyVals[1]}
-		} else {
-			elem.Name = part
-		}
-		elems = append(elems, elem)
-	}
-	return &gnmi.Path{Elem: elems}
-}
-
-func gnmiGet(address, caCert, clientCert, clientKey, username, password, path string) (map[string]interface{}, error) {
+func gnmiGet(address, caCert, clientCert, clientKey, username, password string, paths []struct {
+	prefix *gnmi.Path
+	path   *gnmi.Path
+}) {
 	creds, err := loadTLSCredentials(caCert, clientCert, clientKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load TLS credentials: %w", err)
+		log.Fatalf("failed to load TLS credentials: %v", err)
 	}
 
 	conn, err := grpc.Dial(address, grpc.WithTransportCredentials(creds), grpc.WithPerRPCCredentials(&loginCreds{
@@ -86,36 +66,60 @@ func gnmiGet(address, caCert, clientCert, clientKey, username, password, path st
 		password: password,
 	}))
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
+		log.Fatalf("failed to connect: %v", err)
 	}
 	defer conn.Close()
 
 	client := gnmi.NewGNMIClient(conn)
 
-	getRequest := &gnmi.GetRequest{
-		Path:     []*gnmi.Path{parsePath(path)},
-		Encoding: gnmi.Encoding_JSON_IETF,
-	}
+	for _, p := range paths {
+		getRequest := &gnmi.GetRequest{
+			Prefix:   p.prefix,
+			Path:     []*gnmi.Path{p.path},
+			Encoding: gnmi.Encoding_JSON_IETF,
+		}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	response, err := client.Get(ctx, getRequest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get response: %w", err)
-	}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		response, err := client.Get(ctx, getRequest)
+		if err != nil {
+			log.Fatalf("failed to get response for path %v: %v", p.path, err)
+		}
 
-	for _, notification := range response.Notification {
-		for _, update := range notification.Update {
-			if val, ok := update.Val.GetValue().(*gnmi.TypedValue_JsonIetfVal); ok {
-				var result map[string]interface{}
-				if err := json.Unmarshal(val.JsonIetfVal, &result); err != nil {
-					return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
+		var results []map[string]interface{}
+		for _, notification := range response.Notification {
+			for _, update := range notification.Update {
+				if val, ok := update.Val.GetValue().(*gnmi.TypedValue_JsonIetfVal); ok {
+					var result map[string]interface{}
+					if err := json.Unmarshal(val.JsonIetfVal, &result); err != nil {
+						log.Fatalf("failed to unmarshal JSON for path %v: %v", p.path, err)
+					}
+					result["path"] = pathToMap(update.Path)
+					results = append(results, result)
 				}
-				return result, nil
 			}
 		}
+
+		jsonResponse, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			log.Fatalf("failed to marshal response for path %v: %v", p.path, err)
+		}
+		fmt.Printf("Response for path %v:\n%s\n", p.path, string(jsonResponse))
 	}
-	return nil, fmt.Errorf("no valid response found")
+}
+
+func pathToMap(path *gnmi.Path) map[string]interface{} {
+	result := make(map[string]interface{})
+	elems := []interface{}{}
+	for _, elem := range path.Elem {
+		e := map[string]interface{}{"name": elem.Name}
+		if len(elem.Key) > 0 {
+			e["key"] = elem.Key
+		}
+		elems = append(elems, e)
+	}
+	result["elem"] = elems
+	return result
 }
 
 func main() {
@@ -125,16 +129,55 @@ func main() {
 	clientKey := "../../cert/gnmiclient-key.pem"
 	username := "admin"
 	password := "Cisc0123"
-	path := "openconfig:/interfaces/interface[name=GigabitEthernet1]/state"
 
-	response, err := gnmiGet(address, caCert, clientCert, clientKey, username, password, path)
-	if err != nil {
-		log.Fatalf("Error: %v", err)
+	paths := []struct {
+		prefix *gnmi.Path
+		path   *gnmi.Path
+	}{
+		// Path 1: "openconfig:/interfaces/interface/state/counters"
+		{
+			prefix: &gnmi.Path{Origin: "openconfig"},
+			path: &gnmi.Path{
+				Elem: []*gnmi.PathElem{
+					{Name: "interfaces"},
+					{Name: "interface"},
+					{Name: "state"},
+					{Name: "counters"},
+				},
+			},
+		},
+		// Path 2: "openconfig:/interfaces/interface[name=GigabitEthernet1]/state"
+		{
+			prefix: &gnmi.Path{Origin: "openconfig"},
+			path: &gnmi.Path{
+				Elem: []*gnmi.PathElem{
+					{Name: "interfaces"},
+					{Name: "interface", Key: map[string]string{"name": "GigabitEthernet1"}},
+					{Name: "state"},
+				},
+			},
+		},
+		// Path 3: "rfc7951:/cpu-usage/cpu-utilization"
+		//{
+		//	prefix: &gnmi.Path{Origin: "rfc7951"},
+		//	path: &gnmi.Path{
+		//		Elem: []*gnmi.PathElem{
+		//			{Name: "cpu-usage"},
+		//			{Name: "cpu-utilization"},
+		//		},
+		//	},
+		//},
+		// Path 4: "rfc7951:/memory-statistics/memory-statistic"
+		{
+			prefix: &gnmi.Path{Origin: "rfc7951"},
+			path: &gnmi.Path{
+				Elem: []*gnmi.PathElem{
+					{Name: "memory-statistics"},
+					{Name: "memory-statistic"},
+				},
+			},
+		},
 	}
 
-	jsonResponse, err := json.MarshalIndent(response, "", "  ")
-	if err != nil {
-		log.Fatalf("Failed to marshal response: %v", err)
-	}
-	fmt.Println(string(jsonResponse))
+	gnmiGet(address, caCert, clientCert, clientKey, username, password, paths)
 }
