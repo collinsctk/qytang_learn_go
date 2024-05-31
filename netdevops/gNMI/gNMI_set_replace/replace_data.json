@@ -1,0 +1,73 @@
+[
+  {
+    "path": "/acl",
+    "value": {
+      "acl-sets": {
+        "acl-set": [
+          {
+            "name": "test",
+            "type": "ACL_IPV4",
+            "config": {
+              "name": "test",
+              "type": "ACL_IPV4"
+            },
+            "acl-entries": {
+              "acl-entry": [
+                {
+                  "sequence-id": 10,
+                  "config": {
+                    "sequence-id": 10
+                  },
+                  "ipv4": {
+                    "config": {
+                      "source-address": "1.1.1.6/32",
+                      "destination-address": "2.2.2.0/24",
+                      "protocol": "openconfig-packet-match-types:IP_TCP"
+                    }
+                  },
+                  "transport": {
+                    "config": {
+                      "source-port": "ANY",
+                      "destination-port": "23"
+                    }
+                  },
+                  "actions": {
+                    "config": {
+                      "forwarding-action": "ACCEPT",
+                      "log-action": "LOG_NONE"
+                    }
+                  }
+                },
+                {
+                  "sequence-id": 20,
+                  "config": {
+                    "sequence-id": 20
+                  },
+                  "ipv4": {
+                    "config": {
+                      "source-address": "1.1.1.6/32",
+                      "destination-address": "3.3.3.0/24",
+                      "protocol": "openconfig-packet-match-types:IP_UDP"
+                    }
+                  },
+                  "transport": {
+                    "config": {
+                      "source-port": "ANY",
+                      "destination-port": "53"
+                    }
+                  },
+                  "actions": {
+                    "config": {
+                      "forwarding-action": "ACCEPT",
+                      "log-action": "LOG_NONE"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+]
