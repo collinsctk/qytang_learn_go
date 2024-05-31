@@ -1,0 +1,36 @@
+version: '3'
+services:
+  qyt-influx:
+    image: "influxdb:1.8.5"
+    user: root
+    environment:
+      - INFLUXDB_DB=qytdb
+      - INFLUXDB_ADMIN_USER=admin
+      - INFLUXDB_ADMIN_PASSWORD=Cisc0123
+      - INFLUXDB_USER=qytdbuser
+      - INFLUXDB_USER_PASSWORD=Cisc0123
+    #    volumes:
+    #      - /data/influxdb:/var/lib/influxdb
+    #      - /qyt_influxdb/init-influxdb.sh:/docker-entrypoint-initdb.d/init-influxdb.sh
+    networks:
+      - qyt_net
+    ports:
+      - "8086:8086"
+    restart: always
+
+  qyt-grafana:
+    image: "grafana/grafana:7.5.11"
+    user: root
+    #    volumes:
+    #      - /data/grafana:/var/lib/grafana
+    networks:
+      - qyt_net
+    ports:
+      - "3000:3000"
+    depends_on:
+      - "qyt-influx"
+    restart: always
+
+networks:
+  qyt_net:
+    driver: bridge
