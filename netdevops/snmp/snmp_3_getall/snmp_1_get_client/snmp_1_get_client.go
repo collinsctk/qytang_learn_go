@@ -8,12 +8,14 @@ import (
 
 // SnmpGet 执行SNMP GET请求并返回结果字符串
 func SnmpGet(target string, community string, oid string) (string, error) {
-	g := gosnmp.Default
-	g.Target = target
-	g.Port = 161
-	g.Community = community
-	g.Version = gosnmp.Version2c
-	g.Timeout = time.Duration(2) * time.Second
+	g := &gosnmp.GoSNMP{
+		Target:    target,
+		Port:      161,
+		Community: community,
+		Version:   gosnmp.Version2c,
+		Timeout:   time.Duration(2) * time.Second,
+		Retries:   1,
+	}
 
 	err := g.Connect()
 	if err != nil {
